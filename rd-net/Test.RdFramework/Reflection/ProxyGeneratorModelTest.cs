@@ -77,8 +77,6 @@ namespace Test.RdFramework.Reflection
     [Test, Repeat(10), Description("Repeat test as it reveal cancellation race")]
     public async Task TestSyncCall()
     {
-      SwitchingScheduler.Disable(TestLifetime);
-
       await YieldToClient();
       var client = CFacade.ActivateProxy<IModelOwner>(TestLifetime, ClientProtocol);
       

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using JetBrains.Annotations;
@@ -37,7 +38,7 @@ namespace JetBrains.Collections.Viewable
   /// Task scheduler that either creates separate thread (via <see cref="RunOnSeparateThread"/> or use current
   /// (via <see cref="CreateOverExisting"/>). All enqueued tasks are executed sequentially. 
   /// </summary>
-  public class SingleThreadScheduler : TaskScheduler, IScheduler
+  public class SingleThreadScheduler : TaskScheduler, IRunWhileScheduler
   {
     class ActionQueue
     {
@@ -157,6 +158,25 @@ namespace JetBrains.Collections.Viewable
           myLog.Error(e, $"Abnormal termination of {this}");
         }
       }
+    }
+
+    public bool RunWhile(Func<bool> condition, TimeSpan timeout, bool throwOnTimeout = false)
+    {
+      var stopwatch = timeout == TimeSpan.MaxValue ? null : Stopwatch.StartNew();
+
+      while (condition())
+      {
+        if (stopwatch != null && stopwatch.Elapsed >= timeout)
+        {
+          if (throwOnTimeout)
+            throw new TimeoutException($"RunWhile timed out after {timeout}. Elapsed: {stopwatch.Elapsed}.");
+          return false;
+        }
+
+        ExecuteOneAction(blockIfNoActionAvailable: false);
+      }
+
+      return true;
     }
 
     public bool PumpAndWaitFor(Lifetime lifetime, TimeSpan timeout, Func<bool> condition)

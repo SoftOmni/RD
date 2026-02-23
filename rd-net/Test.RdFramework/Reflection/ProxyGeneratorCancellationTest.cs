@@ -46,11 +46,7 @@ namespace Test.RdFramework.Reflection
 
       public Task AlwaysCancelled()
       {
-        return Task.Run(() =>
-        {
-          Thread.Sleep(100);
-          throw new OperationCanceledException();
-        });
+        return Task.Run(() => throw new OperationCanceledException());
       }
     }
 
