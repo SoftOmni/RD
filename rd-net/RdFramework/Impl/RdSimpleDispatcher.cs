@@ -4,10 +4,11 @@ using System.Threading;
 using JetBrains.Collections.Viewable;
 using JetBrains.Diagnostics;
 using JetBrains.Lifetimes;
+using JetBrains.Util;
 
 namespace JetBrains.Rd.Impl
 {
-  public class RdSimpleDispatcher : IScheduler
+  public class RdSimpleDispatcher : IRunWhileScheduler
   {
     private readonly Lifetime myLifetime;
     private readonly ILog myLogger;
@@ -83,10 +84,52 @@ namespace JetBrains.Rd.Impl
       myEvent.Set();
     }
 
+    public bool RunWhile(Func<bool> condition, TimeSpan timeout, bool throwOnTimeout = false)
+    {
+      var stopwatch = timeout == TimeSpan.MaxValue ? (LocalStopwatch?)null : LocalStopwatch.StartNew();
+
+      while (condition())
+      {
+        if (stopwatch.HasValue && stopwatch.Value.Elapsed >= timeout)
+        {
+          if (throwOnTimeout)
+            throw new TimeoutException($"RunWhile timed out after {timeout}. Elapsed: {stopwatch.Value.Elapsed}.");
+          return false;
+        }
+
+        Action? nextTask = null;
+        lock (myTasks)
+        {
+          if (myTasks.Count > 0)
+            nextTask = myTasks.Dequeue();
+        }
+
+        if (nextTask != null)
+        {
+          try
+          {
+            myLogger.Trace(FormatLogMessage("Process incoming task in RunWhile"));
+            nextTask();
+          }
+          catch (Exception e)
+          {
+            myLogger.Error(e, FormatLogMessage("Exception during RunWhile task processing"));
+          }
+        }
+        else
+        {
+          // Wait for a short time for new tasks
+          var waitTime = 5; // milliseconds
+          myEvent.WaitOne(waitTime);
+        }
+      }
+      return true;
+    }
+    
     private string FormatLogMessage(string message)
     {
       if (myId == null) return message;
       return $"{myId}: {message}";
-    }
+    }    
   }
 }

@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Threading.Tasks;
 using JetBrains.Lifetimes;
 
@@ -10,7 +11,7 @@ namespace JetBrains.Collections.Viewable
   /// Perfect candidate for <see cref="Task.ContinueWith(System.Action{System.Threading.Tasks.Task,object},object)"/>
   /// if you want to guarantee synchronous continuation
   /// </summary>
-  public class SynchronousScheduler : TaskScheduler, IScheduler
+  public class SynchronousScheduler : TaskScheduler, IRunWhileScheduler
   {
     public static readonly SynchronousScheduler Instance = new SynchronousScheduler();
 
@@ -40,6 +41,23 @@ namespace JetBrains.Collections.Viewable
 
     public bool IsActive => ourActive > 0;
     public bool OutOfOrderExecution => false;
+
+    public bool RunWhile(Func<bool> condition, TimeSpan timeout, bool throwOnTimeout = false)
+    {
+      // SynchronousScheduler executes actions inline when queued, so by the time
+      // RunWhile is called the condition is typically already satisfied.
+      var stopwatch = timeout == TimeSpan.MaxValue ? null : Stopwatch.StartNew();
+      while (condition())
+      {
+        if (stopwatch != null && stopwatch.Elapsed >= timeout)
+        {
+          if (throwOnTimeout)
+            throw new TimeoutException($"RunWhile timed out after {timeout}. Elapsed: {stopwatch.Elapsed}.");
+          return false;
+        }
+      }
+      return true;
+    }
 
 
     

@@ -43,7 +43,7 @@ namespace JetBrains.Rd.Reflection
 
 
     /// <summary>
-    /// Sync call which allow nested call execution with help of <see cref="SwitchingScheduler"/>
+    /// Sync call which allow nested call execution with help of <see cref="IRunWhileScheduler"/>
     /// </summary>
     public static TRes SyncNested<TReq, TRes>(RdCall<TReq, TRes> call, TReq request, RpcTimeouts? timeouts = null)
     {
@@ -51,7 +51,7 @@ namespace JetBrains.Rd.Reflection
     }
 
     /// <summary>
-    /// Sync call which allow nested call execution with help of <see cref="SwitchingScheduler"/>
+    /// Sync call which allow nested call execution with help of <see cref="IRunWhileScheduler"/>
     /// </summary>
     public static TRes SyncNested<TReq, TRes>(RdCall<TReq, TRes> call, Lifetime lifetime, TReq request, RpcTimeouts? timeouts = null)
     {
@@ -61,37 +61,30 @@ namespace JetBrains.Rd.Reflection
       // If you want to mitigate this limitation, keep in mind that if you make a sync call from background thread
       // with some small probability your call can be merged in the sync execution of other call. Usually it is not
       // desired behaviour as you can accidentally obtain undesired locks.
-      call.GetProtoOrThrow().Scheduler.AssertThread();
+      var protocol = call.GetProtoOrThrow();
+      protocol.Scheduler.AssertThread();
 
-      var nestedCallsScheduler = new LifetimeDefinition();
-      var responseScheduler = new RdSimpleDispatcher(nestedCallsScheduler.Lifetime, Log.GetLog(call.GetType()));
+      var scheduler = protocol.Scheduler as IRunWhileScheduler;
+      Assertion.Assert(scheduler != null, "Scheduler must implement IRunWhileScheduler for nested calls. Scheduler type: {0}", protocol.Scheduler.GetType());
 
-      using (new SwitchingScheduler.SwitchCookie(responseScheduler))
-      {
-        var task = call.Start(lifetime, request, responseScheduler);
+      var task = call.Start(lifetime, request, null);
 
-        task.Result.Advise(nestedCallsScheduler.Lifetime, result => { nestedCallsScheduler.Terminate(); });
+      RpcTimeouts timeoutsToUse = RpcTimeouts.GetRpcTimeouts(timeouts);
 
-        RpcTimeouts timeoutsToUse = RpcTimeouts.GetRpcTimeouts(timeouts);
-        responseScheduler.MessageTimeout = timeoutsToUse.ErrorAwaitTime;
+      var stopwatch = Stopwatch.StartNew();
 
-        var stopwatch = Stopwatch.StartNew();
-        responseScheduler.Run();
-        if (!task.Result.HasValue())
-        {
-          throw new TimeoutException($"Sync execution of rpc `{call.Location}` is timed out in {timeoutsToUse.ErrorAwaitTime.TotalMilliseconds} ms");
-        }
+      // Pump messages while waiting for the result (no hard timeout; use thresholds for logging only)
+      scheduler.RunWhile(() => !task.Result.HasValue(), TimeSpan.MaxValue);
 
-        stopwatch.Stop();
+      stopwatch.Stop();
 
-        var freezeTime = stopwatch.ElapsedMilliseconds;
-        if (freezeTime > timeoutsToUse.WarnAwaitTime.TotalMilliseconds)
-        {
-          Log.Root.Error("Sync execution of rpc `{0}` executed too long: {1} ms", call.Location, freezeTime);
-        }
+      var freezeTime = stopwatch.ElapsedMilliseconds;
+      if (freezeTime > timeoutsToUse.ErrorAwaitTime.TotalMilliseconds)
+        Log.Root.Error("Sync execution of rpc `{0}` executed too long: {1} ms", call.Location, freezeTime);
+      else if (freezeTime > timeoutsToUse.WarnAwaitTime.TotalMilliseconds)
+        Log.Root.Warn("Sync execution of rpc `{0}` executed too long: {1} ms", call.Location, freezeTime);
 
-        return task.Result.Value.Unwrap();
-      }
+      return task.Result.Value.Unwrap();
     }
 
     public static RpcTimeouts CreateRpcTimeouts(long ticksWarning, long ticksError)

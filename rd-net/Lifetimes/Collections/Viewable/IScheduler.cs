@@ -24,4 +24,16 @@ namespace JetBrains.Collections.Viewable
     /// </summary>
     bool OutOfOrderExecution { get; }
   }
+
+  public interface IRunWhileScheduler : IScheduler
+  {
+    /// <summary>
+    /// Pumps the scheduler while given condition is satisfied or until timeout elapses.
+    /// </summary>
+    /// <param name="condition">A delegate to be executed over and over while it returns true.</param>
+    /// <param name="timeout">Maximum time to spend pumping. Use <see cref="TimeSpan.MaxValue"/> for no limit.</param>
+    /// <param name="throwOnTimeout">If true, throws when timeout elapses; if false, returns false on timeout.</param>
+    /// <returns>True if the condition was reached (condition returned false), false if timeout elapsed (when throwOnTimeout is false).</returns>
+    bool RunWhile(Func<bool> condition, TimeSpan timeout, bool throwOnTimeout = false);
+  }
 }
